@@ -16,12 +16,54 @@ def send_telegram(stats):
         return
     
     chat_id = "8420407013"
+    
+    new_companies_count = stats.get('onboarding', {}).get('new_companies', 0)
+    new_ids = set(stats.get('onboarding', {}).get('new_company_ids', []))
+    new_names = [r['name'] for r in stats.get('refresh', []) if r['company_id'] in new_ids]
+    
+    changed_companies = [r for r in stats.get('refresh', []) if r.get('new', 0) > 0 or r.get('updated', 0) > 0]
+    changed_companies.sort(key=lambda x: (x.get('new',0), x.get('updated',0)), reverse=True)
+    
     text = (f"🚀 *Startup Daily Sync Complete*\n"
-            f"Day: `{stats['run_day']}`\n"
-            f"Status: `{stats['status']}`\n"
-            f"New Companies: {stats['onboarding']['new_companies']} (Total: {stats['companies_total']})\n"
-            f"Active Jobs: {stats['jobs_available']}\n"
-            f"Pending Reviews: {stats['pending_review_items']}")
+            f"Day: `{stats['run_day']}` | Status: `{stats.get('status', 'unknown')}`\n\n"
+            f"🏢 *Companies*\n"
+            f"• Added Today: {new_companies_count}\n"
+            f"• Total Active: {stats.get('companies_total', 0)}\n\n"
+            f"💼 *Jobs*\n"
+            f"• Active: {stats.get('jobs_available', 0)}\n"
+            f"• Closed/Unavailable: {stats.get('jobs_unavailable', 0)}\n\n")
+
+    if new_names:
+        text += f"🆕 *New Companies Added*\n"
+        for name in new_names:
+            text += f"• {name}\n"
+        text += "\n"
+
+    if changed_companies:
+        text += "📈 *Job Updates (Top 10)*\n"
+        for r in changed_companies[:10]:
+            name = r['name']
+            new = r.get('new', 0)
+            updated = r.get('updated', 0)
+            text += f"• {name}: +{new} added, ~{updated} updated\n"
+        if len(changed_companies) > 10:
+            text += f"... and {len(changed_companies) - 10} more.\n"
+            
+    if stats.get('pending_review_items', 0) > 0:
+        text += f"\n⚠️ *Pending Reviews*: {stats['pending_review_items']} (Check DB/Logs)\n"
+
+    errors = stats.get('errors', [])
+    discovery_info = stats.get('discovery')
+    discovery_error = discovery_info.get('error') if isinstance(discovery_info, dict) else None
+    
+    if errors or discovery_error or stats.get('status') == 'failed':
+        text += f"\n❌ *Errors & Issues*\n"
+        if discovery_error:
+            text += f"• Discovery: {discovery_error}\n"
+        for err in errors[:5]:
+            text += f"• {err.get('phase', 'Error')}: {err.get('error', '')}\n"
+        if len(errors) > 5:
+            text += f"• ...and {len(errors) - 5} more.\n"
             
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode('utf-8')
@@ -57,11 +99,11 @@ def main():
         conn.execute('UPDATE public.sync_logs SET details=%s WHERE id=%s', (Jsonb(out), out['run_id']))
         print("Sync completed. Summary:")
         print(json.dumps({
-            'status': out['status'],
-            'new_companies': out['onboarding'].get('new_companies'),
-            'company_total': out['companies_total'],
-            'jobs_available': out['jobs_available'],
-            'reviews': out['pending_review_items']
+            'status': out.get('status'),
+            'new_companies': out.get('onboarding', {}).get('new_companies'),
+            'company_total': out.get('companies_total'),
+            'jobs_available': out.get('jobs_available'),
+            'reviews': out.get('pending_review_items')
         }, indent=2))
         
         send_telegram(out)
