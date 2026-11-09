@@ -1,0 +1,31 @@
+name: Startup Daily Sync
+
+on:
+  schedule:
+    # Runs at 2:00 AM UTC every day.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Adds a button to trigger it manually whenever you want!
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip' # Caches dependencies so it starts instantly
+          
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Run Daily Sync
+        env:
+          SIM_DATABASE_URL: ${{ secrets.SIM_DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python sync_daily.py
