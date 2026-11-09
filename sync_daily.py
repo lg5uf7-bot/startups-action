@@ -86,8 +86,8 @@ def main():
     client = JsonClient(delay=1.05)
     
     # In production, fetch the open-source candidate catalogs exactly once per run
-    named = client.get('https://raw.githubusercontent.com/veresk06/open-ats-feed/main/actor/data/companies.json', 'catalog_named')
-    tokens = client.get('https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json', 'catalog_tokens')
+    named = client.get('https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json', 'catalog_named')
+    tokens = client.get('https://raw.githubusercontent.com/veresk06/open-ats-feed/main/actor/data/companies.json', 'catalog_tokens')
     catalog = Catalog(named, tokens)
 
     def load_feed():
