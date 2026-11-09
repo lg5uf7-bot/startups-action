@@ -142,3 +142,4 @@ def fetch_board(client, board):
         return BoardResult(True,jobs,'',pages)
     except (FetchError,IncompleteBoard,ValueError,TypeError) as exc:
         return BoardResult(False,[],str(exc)[:300],pages)
+ 
