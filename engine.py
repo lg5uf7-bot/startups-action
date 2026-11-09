@@ -20,17 +20,15 @@ def json_hash(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str,separators=(',',':')).encode()).hexdigest()
 
 def review(conn, run_id, run_day, company_id, phase, key, details):
-    row=conn.execute('''INSERT INTO public.sync_logs(run_id,run_day,kind,phase,status,company_id,review_key,details)
-       VALUES (%s,%s,'review',%s,'pending',%s,%s,%s)
-       ON CONFLICT (review_key) WHERE kind='review' AND status='pending'
-       DO UPDATE SET details=EXCLUDED.details,updated_at=now()
-       RETURNING id''',(run_id,run_day,phase,company_id,key,Jsonb(details))).fetchone()
+    row=conn.execute('''INSERT INTO public.sync_logs(run_id,run_day,kind,phase,status,company_id,details)
+       VALUES (%s,%s,'review',%s,'pending',%s,%s)
+       RETURNING id''',(run_id,run_day,phase,company_id,Jsonb(details))).fetchone()
     return row['id']
 
 def save_company(conn, c):
-    conn.execute('''UPDATE public.companies SET source_records=%s, ats_sources=%s, ats_status=%s,
-                 board_policy=%s, updated_at=now() WHERE id=%s''',
-                 (Jsonb(c['source_records']),Jsonb(c['ats_sources']),c['ats_status'],Jsonb(c['board_policy']),c['id']))
+    conn.execute('''UPDATE public.companies SET company_data=%s, ats_sources=%s, ats_status=%s,
+                 updated_at=now() WHERE id=%s''',
+                 (Jsonb(c['company_data']),Jsonb(c['ats_sources']),c['ats_status'],c['id']))
 
 def onboard(conn, feed, run_id, day):
     if not isinstance(feed,list) or not feed:
@@ -44,12 +42,12 @@ def onboard(conn, feed, run_id, day):
         for c in existing:
             cid=str(c['id']); by_name[c['normalized_name']].add(cid)
             if c['domain']: by_domain[c['domain']].add(cid)
-            for item in c['source_records']:
+            for item in c['company_data']:
                 if isinstance(item,dict) and item.get('key'):
                     if item['key'] in by_source and by_source[item['key']]!=cid:
                         raise ValueError('Source key attached to multiple companies')
                     by_source[item['key']]=cid
-        used=conn.execute("SELECT count(*) AS n FROM public.companies WHERE origin='feed' AND onboarded_on=%s",(day,)).fetchone()['n']
+        used=conn.execute("SELECT count(*) AS n FROM public.companies WHERE onboarded_on=%s",(day,)).fetchone()['n']
         created=[]; updated=set(); ambiguous=0; invalid=0; same_records=0
         for rec in feed:
             n=str(rec.get('name') or '').strip(); nk=name_key(n); dom=safe_domain(rec.get('website'))
@@ -69,19 +67,19 @@ def onboard(conn, feed, run_id, day):
                                {'message':'Possible company collision; not automatically merged or inserted.', 'feed_name':n,'feed_website':rec.get('website'),'source':rec.get('source')})
                     continue
                 elif used<DAILY_LIMIT:
-                    row=conn.execute('''INSERT INTO public.companies(name,normalized_name,website,domain,origin,onboarded_on)
-                         VALUES (%s,%s,%s,%s,'feed',%s) RETURNING *''',(n,nk,rec.get('website'),dom,day)).fetchone()
+                    row=conn.execute('''INSERT INTO public.companies(name,normalized_name,website,domain,onboarded_on)
+                         VALUES (%s,%s,%s,%s,%s) RETURNING *''',(n,nk,rec.get('website'),dom,day)).fetchone()
                     cid=str(row['id']); by_id[cid]=row; by_name[nk].add(cid)
                     if dom: by_domain[dom].add(cid)
                     used+=1; created.append(cid)
                 else:
                     continue
             c=by_id[cid]; content_hash=json_hash(rec)
-            if any(x.get('key')==sk and x.get('hash')==content_hash for x in c['source_records'] if isinstance(x,dict)):
+            if any(x.get('key')==sk and x.get('hash')==content_hash for x in c['company_data'] if isinstance(x,dict)):
                 same_records+=1
             else:
                 # Keep distinct raw versions/cohort records; never overwrite manual data.
-                c['source_records'].append({'key':sk,'hash':content_hash,'record':rec})
+                c['company_data'].append({'key':sk,'hash':content_hash,'record':rec})
                 updated.add(cid)
             by_source[sk]=cid
         for cid in updated:
@@ -100,7 +98,7 @@ def discover_pending(conn, catalog, client, run_id, day):
             c['ats_status']='no_ats_found'; c['ats_sources']=[]
             with conn.transaction():
                 save_company(conn,c)
-                review(conn,run_id,day,c['id'],'board_missing',f"board_missing:{c['id']}",
+                review(conn,run_id,day,c['id'],'no_ats_found',f"no_ats_found:{c['id']}",
                        {'message':'No candidate board found in the current catalogs. This does not prove there are no jobs or API.'})
             continue
         stats['candidate_boards']+=len(boards)
@@ -303,13 +301,13 @@ def refresh_company(conn,c,client,run_id,day):
         if not result.complete:
             with conn.transaction():
                 save_company(conn,c)
-                review(conn,run_id,day,c['id'],'board_failure',f"board_failure:{c['id']}:{b['provider']}:{b['token']}",
+                review(conn,run_id,day,c['id'],'ats_api_failure',f"ats_api_failure:{c['id']}:{b['provider']}:{b['token']}",
                        {'message':'Failed or incomplete response; no jobs changed.', 'board_url':b['board_url'],'api_url':b['api_url'],'error':result.error})
             stats['outcome']='incomplete_no_changes'; return stats
         if not result.jobs:
             with conn.transaction():
                 save_company(conn,c)
-                review(conn,run_id,day,c['id'],'empty_board',f"empty_board:{c['id']}:{b['provider']}:{b['token']}",
+                review(conn,run_id,day,c['id'],'ats_api_empty',f"ats_api_empty:{c['id']}:{b['provider']}:{b['token']}",
                        {'message':'Successful empty board: existing jobs remain unchanged; manual review required.', 'board_url':b['board_url'],'api_url':b['api_url'],'count':0})
             stats['outcome']='empty_no_changes'; return stats
         results.append((b,result.jobs))
@@ -412,16 +410,16 @@ def resolve_review(conn, review_id, decision):
             urls=sorted(b['board_url'] for b in verified)
             if len(urls)<2: raise ValueError('Need two verified boards')
             if mode=='both':
-                c['board_policy']={'mode':'both','accepted_board_urls':urls}
+                pass
             else:
                 chosen=decision.get('board_url')
                 if chosen not in urls: raise ValueError('Primary URL must be one of the reviewed boards')
                 for b in verified: b['role']='primary' if b['board_url']==chosen else 'alternative'
-                c['board_policy']={'mode':'primary','primary_board_url':chosen,'accepted_board_urls':urls}
+                pass
             save_company(conn,c)
         elif mode!='acknowledge':
             raise ValueError('Use acknowledge for this review type')
-        conn.execute("UPDATE public.sync_logs SET status='resolved',resolved_at=now(),details=details || %s::jsonb,updated_at=now() WHERE id=%s",
+        conn.execute("UPDATE public.sync_logs SET status='resolved',details=details || %s::jsonb,updated_at=now() WHERE id=%s",
                      (Jsonb({'resolution':decision}),review_id))
 
 def run_day(conn, day, feed_loader, catalog, client):
