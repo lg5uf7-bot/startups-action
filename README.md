@@ -1,4 +1,6 @@
 # Startup Companies + Jobs Collector
+## العربية / Arabic
+- [العربية (README_AR.md)](README_AR.md)
 
 Daily, idempotent pipeline that discovers startups, enriches company profiles,
 detects their ATS, and keeps active jobs in Supabase.
