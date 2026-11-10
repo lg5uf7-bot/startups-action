@@ -1,38 +1,71 @@
-name: Startup Daily Sync
+name: Startup Data Collector
 
 on:
   schedule:
-    # Runs at 2:00 AM UTC every day.
-    - cron: '0 2 * * *'
+    # Daily at 02:00 UTC. The collector also has an internal runtime budget.
+    - cron: "0 2 * * *"
   workflow_dispatch:
-    # Adds a button to trigger it manually whenever you want!
+    inputs:
+      mode:
+        description: "Run mode"
+        required: false
+        default: daily
+        type: choice
+        options: [daily, backfill]
+      max_enrich:
+        description: "Max candidates to enrich"
+        required: false
+        default: "25"
+      max_new:
+        description: "Max new companies to sync jobs for"
+        required: false
+        default: "25"
+      max_refresh:
+        description: "Max existing companies to refresh"
+        required: false
+        default: "120"
+      dry_run:
+        description: "Fetch sources only, no database writes"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+concurrency:
+  group: startup-collector
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  run-pipeline:
+  collect:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 50
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
-          cache: 'pip' # Caches dependencies so it starts instantly
-          
-      - name: Install requirements
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Daily Sync
+      - name: Run collector
         env:
           SIM_DATABASE_URL: ${{ secrets.SIM_DATABASE_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python sync_daily.py 
-     
-      - name: Run AI ATS Investigator
-        env:
-          SIM_DATABASE_URL: ${{ secrets.SIM_DATABASE_URL }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python ai_researcher.py
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          MAX_ENRICH: ${{ inputs.max_enrich || '25' }}
+          MAX_NEW_JOBS: ${{ inputs.max_new || '25' }}
+          MAX_REFRESH: ${{ inputs.max_refresh || '120' }}
+          MAX_RUNTIME_SECONDS: "2700"
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          MODE: ${{ inputs.mode || 'daily' }}
+        run: python -m collector --mode "$MODE"
